@@ -15,7 +15,7 @@
 // that spelling would collide with the `let date = …` the compiler emits beside
 // it. `__helpers` carries the prefix that says "generated", the same convention
 // `__pybridge` and `__proto` follow.
-import { NONE, __pybridge, plainData, pyData, ticking } from './runtime.js';
+import { NONE, __pybridge, plainData, ticking } from './runtime.js';
 
 // A helper's refusal, in the dialect the rest of the project speaks.
 //
@@ -51,15 +51,65 @@ function shown(value) {
     }
 }
 
+// A Python int above 2^53 is a JavaScript BigInt, and `JSON.stringify` refuses
+// one outright: `TypeError: Do not know how to serialize a BigInt`, a JavaScript
+// accident out of a template filter, where `json.dumps(2 ** 70)` writes the
+// digits. Svelthon renders that very number on its own front page, so this was
+// the one place a big integer was refused.
+//
+// The digits have to go out *unquoted*, which a replacer cannot do by itself: a
+// BigInt back from it throws again and a string comes out in quotes.
+// `JSON.rawJSON` is the answer the language grew for this, and it is checked
+// rather than assumed, so an engine without it throws the message it throws
+// today instead of a stranger one about `rawJSON`.
+const raw = (one) =>
+    typeof one === 'bigint' && typeof JSON.rawJSON === 'function' ? JSON.rawJSON(`${one}`) : one;
+
+// The same edge, met by the two date helpers. `new Date(2 ** 70)` refuses a
+// BigInt outright, `Cannot convert a BigInt value to a number`, and it throws
+// before the Invalid Date guard below can say whose fault it is: the author
+// wrote `{date(count)}` and read a JavaScript accident.
+//
+// Turning it into a number changes no answer. `Date` spans ±275 760 years,
+// which is ±8.64e15 milliseconds, so every integer big enough to be a BigInt is
+// already outside it: the value is invalid either way, and this is only
+// about which sentence says so.
+const moment = (value) => (typeof value === 'bigint' ? Number(value) : value);
+
 // Jinja's `|tojson`. A non-numeric indent is dropped rather than passed on:
 // Python's None is an object, and `JSON.stringify(v, null, None)` would quietly
 // indent with it.
 export function tojson(value, indent) {
-    return JSON.stringify(plainData(value), null, typeof indent === 'number' ? indent : undefined);
+    return JSON.stringify(
+        plainData(value),
+        (_, one) => raw(one),
+        typeof indent === 'number' ? indent : undefined
+    );
 }
 
+// Python's `javascript.JSON.parse`, not the `JSON.parse` of the language this
+// file is written in. Brython registers its builtin modules as the engine loads,
+// and importing `runtime.js` has loaded it, so there is nothing to wait for.
+const parseJson = (() => {
+    const $B = globalThis.__BRYTHON__;
+
+    return $B.$getattr($B.$getattr($B.imported.javascript, 'JSON'), 'parse');
+})();
+
+// And the way back, through Brython's route rather than the JavaScript one.
+//
+// It used to be `JSON.parse` with a reviver of our own for `null`, and that
+// reviver is the reason this changed: a reviver cannot repair an integer past
+// 2^53, because `JSON.parse` has already made a double of it by the time one
+// runs. `javascript.JSON` reads the source text of the literal instead, so the
+// digits survive, and it answers `None` for `null` at every depth without our
+// help.
+//
+// Measured against the old route on fourteen documents, containers and bare
+// values, and on three malformed ones: the same value everywhere except the
+// large integers, and the same refusal to the character.
 export function from_json(text) {
-    return pyData(JSON.parse(text));
+    return parseJson(text);
 }
 
 // Jinja's `|batch(3)`. A list of lists, not a lazy iterator: an `{#each}` reads
@@ -94,7 +144,7 @@ export function batch(xs, size, fill) {
 // *its* language and the browser reformats in the visitor's, which Svelte
 // reports as a hydration mismatch.
 export function date(value, dateStyle, timeStyle, locale) {
-    const at = value instanceof Date ? value : new Date(value);
+    const at = value instanceof Date ? value : new Date(moment(value));
 
     if (Number.isNaN(at.getTime())) {
         throw refuse('date(): ' + shown(value) + ' is not a date');
@@ -129,7 +179,7 @@ const UNITS = [
 // what the *display* needs: a second while it counts seconds, an hour once it
 // counts days. So it slows down on its own as a date ages.
 export function fromnow(value, locale) {
-    const at = value instanceof Date ? value : new Date(value);
+    const at = value instanceof Date ? value : new Date(moment(value));
 
     if (Number.isNaN(at.getTime())) {
         throw refuse('fromnow(): ' + shown(value) + ' is not a date');
