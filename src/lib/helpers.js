@@ -15,7 +15,7 @@
 // that spelling would collide with the `let date = …` the compiler emits beside
 // it. `__helpers` carries the prefix that says "generated", the same convention
 // `__pybridge` and `__proto` follow.
-import { NONE, __pybridge, plainData, pyClass, ticking } from './runtime.js';
+import { NONE, __pybridge, plainData, plainObject, pyClass, pyEntries, ticking } from './runtime.js';
 
 // A helper's refusal, in the dialect the rest of the project speaks.
 //
@@ -297,12 +297,27 @@ function mapping(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
     if (globalThis.__BRYTHON__.is_dict(value)) return true;
 
-    return !('ob_type' in value) && Object.getPrototypeOf(value) === Object.prototype;
+    // The same question `plainData` asks, asked of the same predicate. This line
+    // read `=== Object.prototype` and the converter accepted a null prototype
+    // too, so one shape crossed three ways: `to_js` and `tojson` rendered it and
+    // `urlencode` wrote `<Javascript object: [object Object]>` into the page.
+    // A **class** under that name, and not the name alone. `ob_type` is
+    // Brython's mark, and a foreign object is free to carry a field spelled the
+    // same: `{ob_type: "business", value: 42}` came out of `urlencode` as
+    // `%5Bobject%20Object%5D`, every parameter gone, while the identical Python
+    // dict encoded correctly. The question is *is this a Python object*, and
+    // `pyClass` is what the rest of the project asks — the same repair the
+    // inbound converter got when it read `ob_type === undefined`.
+    return !pyClass(value.ob_type) && plainObject(value);
 }
 
 // Jinja's shape: a string, or a mapping that becomes a whole query string. Not
 // Jinja's behaviour, and not Django's either: both leave `/` unquoted, which
 // quietly turns `/tag/{urlencode(t)}` into two path segments.
+//
+// A key that is not a string is written the way `str()` writes it, and two that
+// collide once written both stay: measured against CPython's
+// `urllib.parse.urlencode`, which answers `1=a&1=b` for `{1: "a", "1": "b"}`.
 export function urlencode(value) {
     // A Date is a value and never a mapping, and the sortable spelling is the
     // one a URL wants. Reading it through Python instead gave
