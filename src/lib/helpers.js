@@ -23,10 +23,26 @@ import {
     plainObject,
     pyClass,
     pyCoroutine,
+    pyScalar,
     pyEntries,
     pyName,
     ticking
 } from './runtime.js';
+
+// What the author wrote, as a value JavaScript can read with `typeof`.
+//
+// Python's `str`, `int` and `float` subclasses are *objects* here, holding the
+// value in a field, and `typeof` says `object` for all three. Every helper in
+// this file asked its own narrow question about the values it takes, and each
+// one answered wrongly in its own way for the same input: `batch` refused a
+// size, `date` refused a timestamp — which in a template is a component that
+// does not mount — and then, seven lines further on, silently ignored a style
+// and formatted in the default one.
+//
+// Shared recognition, not shared rules. Each helper still says for itself what
+// it will accept; this only lets it see what it was handed. A value that is not
+// a Python scalar comes back untouched, so every refusal already written stands.
+const written = (value) => pyScalar(value) ?? value;
 
 // A helper's refusal, in the dialect the rest of the project speaks.
 //
@@ -129,10 +145,15 @@ const FLOAT = globalThis.__BRYTHON__.builtins.float;
 // large enough to be one is outside the range `Date` spans.
 function instant(value) {
     if (value instanceof Date) return value;
-    if (value !== null && typeof value === 'object' && value.ob_type === FLOAT) {
-        return new Date(value.value);
-    }
 
+    // `written` first, then this helper's own domain: what is shared is the
+    // recognition, not the rule about what a date may be.
+    //
+    // The line this replaces asked `pyScalar` and kept its answer **only when it
+    // was a number**, so `class Stamp(float)` was repaired and `class Text(str)`
+    // holding an ISO date was not — and the two are one question. The domain
+    // below is unchanged: a string or a number is a date, a boolean, a list or
+    // an object is not.
     const one = moment(value);
 
     return typeof one === 'string' || typeof one === 'number' ? new Date(one) : new Date(NaN);
@@ -201,7 +222,10 @@ export function tojson(value, indent) {
         // `plainData` hand their result to JavaScript, which has identity.
         plainData(value, new Set(), noCall),
         (_, one) => raw(one),
-        typeof indent === 'number' ? indent : undefined
+        // The same question as the styles below, asked of a number: an
+        // `class Width(int)` reads as an object and the output came out on one
+        // line, which is a difference nobody sees in a page.
+        typeof written(indent) === 'number' ? written(indent) : undefined
     );
 }
 
@@ -238,6 +262,12 @@ export function from_json(text) {
 // None", the rule every helper follows, since None is an object and would
 // otherwise sail through an `!== undefined` test and be rendered as a cell.
 export function batch(xs, size, fill) {
+    // The same recognition, for the same reason: `Number.isInteger` asked of the
+    // object a Python `int` subclass is answers false, so a perfectly good size
+    // was refused before its value was ever read. The constraint below is this
+    // helper's own and stays exactly as it was.
+    size = written(size);
+
     if (!Number.isInteger(size) || size < 1) {
         throw refuse('batch(): size must be an integer of at least one');
     }
@@ -271,17 +301,27 @@ export function date(value, dateStyle, timeStyle, locale) {
     // A string, or absent. Python's None is an *object*, so testing against
     // undefined would hand Intl a Brython singleton and fail on a value the
     // author wrote as "nothing".
+    //
+    // And `written`, because a `class Text(str)` is an object here too — this
+    // read it as absent and formatted in the default style, which is the same
+    // defect as the one above without the mercy of an error: `date(when,
+    // Text("full"))` rendered a medium date and said nothing.
     const options = {};
+    const style = written(dateStyle);
+    const clock = written(timeStyle);
 
-    if (typeof dateStyle === 'string') options.dateStyle = dateStyle;
-    if (typeof timeStyle === 'string') options.timeStyle = timeStyle;
+    if (typeof style === 'string') options.dateStyle = style;
+    if (typeof clock === 'string') options.timeStyle = clock;
     if (options.dateStyle === undefined && options.timeStyle === undefined) {
         options.dateStyle = 'medium';
     }
 
-    const language = typeof locale === 'string' ? locale : undefined;
+    const language = written(locale);
 
-    return new Intl.DateTimeFormat(language, options).format(at);
+    return new Intl.DateTimeFormat(
+        typeof language === 'string' ? language : undefined,
+        options
+    ).format(at);
 }
 
 const UNITS = [
@@ -330,9 +370,11 @@ export function fromnow(value, locale) {
 
     ticking(Math.max(1, Math.min(rounding, leaving) * 1000));
 
-    const language = typeof locale === 'string' ? locale : undefined;
+    const language = written(locale);
 
-    return new Intl.RelativeTimeFormat(language, { numeric: 'auto' }).format(count, unit);
+    return new Intl.RelativeTimeFormat(typeof language === 'string' ? language : undefined, {
+        numeric: 'auto'
+    }).format(count, unit);
 }
 
 // Django's `|slugify`. One rule, no option: normalise, lowercase, keep every
