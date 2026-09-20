@@ -636,15 +636,163 @@ export function urlencode(value) {
     return encodeURIComponent(__pybridge.str(value));
 }
 
+// **Called by name as well as by position.** The README writes these signatures
+// the way Python writes them — `tojson(value, indent=None)`, `batch(xs, n)` —
+// and an author writes what the documentation shows. Nothing read the keywords.
+//
+// They do arrive: Brython hands a keyword call a trailing object carrying,
+// under its symbol `$B.KW`, an array whose first entry holds the literal
+// keywords and whose rest are the dicts a `**` spread contributed. Dropping it was the worst of the
+// three behaviours this project names: `tojson(rows, indent=2)` wrote
+// unindented JSON and said nothing, and `batch(rows, n=2)` refused the author
+// for a size they had just given.
+//
+// The names are ours, which is the whole reason this is fixable here: a
+// JavaScript function carries no parameter names to place them by.
+//
+// **Written the way Python writes a signature**, which is also the way the
+// README shows it: a name alone has to be given, a name carrying a default does
+// not. The table used to hold the names and nothing else, so it could say which
+// parameters exist and not which a call must fill — and the refusal below had
+// to hedge with *at most* where CPython says *from 1 to 2*. They are one fact
+// about a signature, and they are written in one place now.
+//
+// `fn.length` cannot stand in for it: these are JavaScript functions whose
+// optional parameters are declared like every other one, so `tojson.length` is
+// 2 and `date.length` is 4.
+const KEYWORDS = {
+    tojson: ['value', 'indent=None'],
+    from_json: ['text'],
+    batch: ['xs', 'n', 'fill=None'],
+    date: ['value', 'style=None', 'clock=None', 'locale=None'],
+    fromnow: ['value', 'locale=None'],
+    slugify: ['text'],
+    striptags: ['html'],
+    urlencode: ['value']
+};
+
+// CPython's own way of listing them: `'a'`, then `'a' and 'b'`, then
+// `'a', 'b', and 'c'` with the comma before the `and`.
+const listed = (names) => {
+    const quoted = names.map((one) => `'${one}'`);
+
+    if (quoted.length < 3) return quoted.join(' and ');
+
+    return `${quoted.slice(0, -1).join(', ')}, and ${quoted[quoted.length - 1]}`;
+};
+
+// The keywords of a call, which Brython hands over as a trailing object
+// carrying them under its own symbol, `$B.KW`: no argument an author passes, a
+// Python dict or a JavaScript object, can carry that key.
+const keywordsOf = (args) => args[args.length - 1]?.[globalThis.__BRYTHON__.KW] ?? null;
+
+// A name the helper does not take is an error, not something to ignore: the
+// spelling is the only thing the author can have got wrong, and Python says so
+// too.
+const byName = (fn, signature) => {
+    // The name a caller writes, and where the optional ones start. Python puts
+    // every default after every required parameter, so the boundary is an
+    // index: `findIndex` reads it off the table instead of counting, and cannot
+    // answer two if the table is ever written out of order.
+    const names = signature.map((one) => one.split('=')[0]);
+    const optional = signature.findIndex((one) => one.includes('='));
+    const needed = optional === -1 ? names.length : optional;
+    const takes = `It takes ${signature.join(', ')}.`;
+
+    const wrapped = (...args) => {
+        const kw = keywordsOf(args);
+        const given = kw === null ? [...args] : args.slice(0, -1);
+
+        // **A fixed Python signature does not become permissive because what
+        // implements it is a JavaScript function.** JavaScript drops an argument
+        // it has no parameter for and says nothing, so `slugify("a", "b")` read
+        // as a correct call and the second word vanished.
+        if (given.length > names.length) {
+            // CPython's own wording, both of them: a signature with no default
+            // says how many it takes, one with a default says the range.
+            const counted =
+                needed === names.length
+                    ? `${names.length} positional argument${names.length === 1 ? '' : 's'}`
+                    : `from ${needed} to ${names.length} positional arguments`;
+
+            throw refuse(`${fn.name}() takes ${counted} but ${given.length} were given. ${takes}`);
+        }
+
+        // Which positions the call has already filled. Without this a keyword
+        // **overwrote** what position had put there — `batch(rows, 2, n=3)`
+        // grouped by three and said nothing, which is a wrong answer out of a
+        // call the author got wrong and was never told about. Python raises.
+        const filled = new Set(given.keys());
+
+        // The engine's own reading of the keywords, which is what a Python
+        // function gets: the explicit ones, then each `**` mapping through its
+        // `keys()` and `__getitem__`, a key given twice refused. Each mapping
+        // was read here as an object instead, so a mapping that is not a dict
+        // handed over the engine's fields, `no argument named ob_type`.
+        const keywords = kw === null ? {} : globalThis.__BRYTHON__.parse_kwargs(kw, fn.name);
+
+        for (const [key, value] of Object.entries(keywords)) {
+            // A subclass of str names the argument by the value it holds.
+            const name = written(key);
+            const at = names.indexOf(name);
+
+            if (at === -1) {
+                throw refuse(`${fn.name}(): no argument named ${name}. ${takes}`);
+            }
+
+            // A keyword that names a position already filled: `batch(rows, 2,
+            // n=3)` is two values for one parameter.
+            if (filled.has(at)) {
+                throw refuse(`${fn.name}() got multiple values for argument '${name}'`);
+            }
+
+            filled.add(at);
+            given[at] = value;
+        }
+
+        // **What the table could not say before.** It named the parameters and
+        // not which of them a call has to fill, so an omission reached the
+        // helper as `undefined` and was read there as absence: `slugify()`
+        // answered the empty string and `tojson(indent=2)` wrote `null`, both
+        // without a word, out of a call whose missing argument is the only
+        // thing wrong with it.
+        //
+        // The *positions*, never the values: `None`, `False`, `0` and the empty
+        // string are arguments that were given, and two of them are what an
+        // author writes on purpose — `tojson(None)` is `null` and means it.
+        const missing = names.slice(0, needed).filter((_, at) => !filled.has(at));
+
+        if (missing.length) {
+            throw refuse(
+                `${fn.name}() missing ${missing.length} required positional ` +
+                    `argument${missing.length === 1 ? '' : 's'}: ${listed(missing)}`
+            );
+        }
+
+        return fn(...given);
+    };
+
+    // The name and the arity stay the helper's own: a refusal quotes the name,
+    // and `length` is what a caller reads to learn what a function takes.
+    Object.defineProperties(wrapped, {
+        name: { value: fn.name, configurable: true },
+        length: { value: fn.length, configurable: true }
+    });
+
+    return wrapped;
+};
+
 // What the generated script binds. One object, one prefixed import, and the keys
 // are the Python spellings so `injected.cjs` names them the way an author does.
-export const helpers = {
-    tojson,
-    from_json,
-    batch,
-    date,
-    fromnow,
-    slugify,
-    striptags,
-    urlencode
-};
+export const helpers = Object.fromEntries(
+    Object.entries({
+        tojson,
+        from_json,
+        batch,
+        date,
+        fromnow,
+        slugify,
+        striptags,
+        urlencode
+    }).map(([name, fn]) => [name, byName(fn, KEYWORDS[name])])
+);
