@@ -30,7 +30,9 @@ import {
     opaque,
     pyBytes,
     thenable,
-    ticking
+    ticking,
+    unboxed,
+    jsonCopy
 } from './runtime.js';
 
 // What the author wrote, as a value JavaScript can read with `typeof`.
@@ -156,12 +158,6 @@ const raw = (one) =>
 // about which sentence says so.
 const moment = (value) => (typeof value === 'bigint' ? Number(value) : value);
 
-// A Brython float is an object holding a number, not a number, and it is what
-// ordinary Python produces: `1.5` is one, and so is `3 / 2`, since a division is
-// a float even between integers. It is the fourth shape the two date helpers
-// receive.
-const FLOAT = globalThis.__BRYTHON__.builtins.float;
-
 // What `new Date` accepts is wider than what an author can mean, and it says so
 // in silence: it coerces a value through its *string* form, so `date([2026])`
 // answered 1 January 2026 and `date([1, 2])` answered 2 January 2001. A boolean
@@ -207,6 +203,15 @@ function instant(value) {
 // Handing the class over whole is right at the *boundary*, where JavaScript can
 // call it; it is not a thing to write into a page.
 const serialisable = (one) => {
+    // A copy `plainData` made at an object's turn has been asked already, and
+    // asking it again would read its fields, which read the author's.
+    if (jsonCopy(one)) return one;
+
+    // A String, a Number, a Boolean or a BigInt object is its primitive to the
+    // serialiser, and so to every refusal below: `new Number(NaN)` is `NaN`.
+    const box = unboxed(one);
+    if (box !== undefined) one = box.value;
+
     // **A number that is not finite.** JSON has no notation for `NaN` or
     // `±Infinity`, and `JSON.stringify` writes `null` for them: a page said
     // `null` where the model held a division by zero or an overflow, which is a
@@ -229,6 +234,19 @@ const serialisable = (one) => {
     if (pyClass(one)) {
         throw refuse(`tojson(): ${shown(one)} is a class, and a class has no JSON`);
     }
+
+    // What a `toJSON` hands back arrives here without the walk, since
+    // `JSON.stringify` calls the hook itself, with its receiver and its key. So
+    // the walk's refusals are asked of it again, at any depth; on the walk's own
+    // output none of these can arrive.
+    const walkRefuses =
+        typeof one === 'symbol' ||
+        callable(one) ||
+        (one !== null &&
+            typeof one === 'object' &&
+            (thenable(one) || pyCoroutine(one) || isSet(one) || pyBytes(one) || opaque(one)));
+
+    if (walkRefuses) noCall(one);
 
     return raw(one);
 };
