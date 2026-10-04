@@ -170,7 +170,31 @@ function instant(value) {
     // list or an object is not.
     const one = moment(written(value));
 
-    return typeof one === 'string' || typeof one === 'number' ? new Date(one) : new Date(NaN);
+    if (typeof one === 'string') return outOfMonth(one) ? new Date(NaN) : new Date(one);
+
+    return typeof one === 'number' ? new Date(one) : new Date(NaN);
+}
+
+// A calendar day its month does not have. V8 carries it into the next month,
+// `2026-02-30` as 2 March, where the specification makes the string invalid and
+// Python's `datetime.fromisoformat` answers `day 30 must be in range 1..28`. The
+// written year, month and day are checked, not the instant: a time zone moves
+// the instant to another day.
+//
+// The written day, in the two year forms the specification has, four digits
+// and a signed six: one shape, read here and by `date`'s calendar day.
+const DAY = /([+-]\d{6}|\d{4})-(\d{2})-(\d{2})/;
+const CALENDAR_DAY = new RegExp(`^\\s*${DAY.source}(?!\\d)`);
+
+function outOfMonth(text) {
+    const found = CALENDAR_DAY.exec(text);
+    if (found === null) return false;
+
+    const [year, month, day] = found.slice(1).map(Number);
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+
+    return days === undefined || day < 1 || day > days;
 }
 
 // Jinja's `|tojson`. A non-numeric indent is dropped rather than passed on:
@@ -416,7 +440,8 @@ export function batch(xs, size, fill) {
 // *its* language and the browser reformats in the visitor's, which Svelte
 // reports as a hydration mismatch.
 // A date and nothing else: the one shape that is a day rather than an instant.
-const DAY_ONLY = (value) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+const DAY_ALONE = new RegExp(`^${DAY.source}$`);
+const DAY_ONLY = (value) => typeof value === 'string' && DAY_ALONE.test(value);
 
 export function date(value, dateStyle, timeStyle, locale) {
     const at = instant(value);
