@@ -416,7 +416,12 @@ export function tojson(value, indent) {
         level === undefined ? undefined : '\u0001'
     );
 
-    return level === undefined || text === undefined ? text : text.replaceAll('\u0001', level);
+    // As Jinja's `tojson`, which writes these four as escapes so the text holds
+    // in a `<script>` or an attribute: a `</script>` in a value closed the
+    // element `{@html}` wrote it in. Outside a string, JSON holds none of them.
+    const safe = text?.replace(/[<>&']/g, (one) => `\\u00${one.charCodeAt(0).toString(16)}`);
+
+    return level === undefined || safe === undefined ? safe : safe.replaceAll('\u0001', level);
 }
 
 // And the way back, through Brython's route rather than the JavaScript one,
@@ -487,6 +492,8 @@ export function batch(xs, size, fill) {
 const DAY_ALONE = new RegExp(`^${DAY.source}$`);
 const DAY_ONLY = (value) => typeof value === 'string' && DAY_ALONE.test(value);
 
+const STYLES = ['full', 'long', 'medium', 'short'];
+
 export function date(value, dateStyle, timeStyle, locale) {
     const at = instant(value);
 
@@ -504,6 +511,17 @@ export function date(value, dateStyle, timeStyle, locale) {
     const options = {};
     const style = written(dateStyle);
     const clock = written(timeStyle);
+
+    // A format of letters, Django's `"Y-m-d"`, is no style, and `Intl` said so
+    // in its own words, naming an option of its own.
+    for (const given of [style, clock]) {
+        if (typeof given === 'string' && !STYLES.includes(given)) {
+            throw refuse(
+                `date(): ${shown(given)} is not a style: date() takes "full", "long", "medium" or "short", ` +
+                    `which it writes in the reader's language, and no format letters`
+            );
+        }
+    }
 
     if (typeof style === 'string') options.dateStyle = style;
     if (typeof clock === 'string') options.timeStyle = clock;
@@ -529,13 +547,26 @@ export function date(value, dateStyle, timeStyle, locale) {
     // belongs in the reader's zone.
     if (DAY_ONLY(written(value))) options.timeZone = 'UTC';
 
+    return formatter('date', locale, (language) => new Intl.DateTimeFormat(language, options)).format(at);
+}
+
+// The formatter `make` builds for the language `locale` writes. Python's locale,
+// `fr_FR`, is no language tag, and `Intl` refused it as `Incorrect locale
+// information provided`, said in the words of `Intl` and of no helper.
+const formatter = (helper, locale, make) => {
     const language = written(locale);
 
-    return new Intl.DateTimeFormat(
-        typeof language === 'string' ? language : undefined,
-        options
-    ).format(at);
-}
+    try {
+        return make(typeof language === 'string' ? language : undefined);
+    } catch (error) {
+        if (!(error instanceof RangeError)) throw error;
+
+        throw refuse(
+            `${helper}(): ${shown(language)} is not a language tag: write it as the web does, ` +
+                `${shown(String(language).replaceAll('_', '-'))}`
+        );
+    }
+};
 
 const UNITS = [
     ['year', 31536000], ['month', 2592000], ['week', 604800],
@@ -583,15 +614,13 @@ export function fromnow(value, locale) {
 
     ticking(Math.max(1, Math.min(rounding, leaving) * 1000));
 
-    const language = written(locale);
-
-    return new Intl.RelativeTimeFormat(typeof language === 'string' ? language : undefined, {
-        numeric: 'auto'
-    }).format(count, unit);
+    return formatter('fromnow', locale, (language) => new Intl.RelativeTimeFormat(language, { numeric: 'auto' })).format(count, unit);
 }
 
-// Django's `|slugify`. One rule, no option: normalise, lowercase, keep every
-// letter, digit and mark, turn the rest into a dash.
+// A URL segment made of a title, as Django's `|slugify` makes one, but not by
+// its rule, which drops accents and punctuation. One rule, no option:
+// normalise, lowercase, keep every letter, digit and mark, turn the rest into
+// a dash.
 //
 // NFC, not NFD: `é` written as one code point and as `e` plus a combining acute
 // look the same and must give the same URL.
