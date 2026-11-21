@@ -1,17 +1,17 @@
-// The template helpers, as ordinary functions, where a coverage tool can
-// instrument them: `from_now` alone chooses between seven units and two
-// directions. `injected.js` keeps the *names*, and what it emits is a
-// reference, `() => __helpers.date`, rather than a body.
+// Brylters, the Brython filters for JavaScript frameworks: the template filters
+// of Django and Jinja for the Python values of Brython, as ordinary functions a
+// template calls, `date`, `from_now`, `slugify`, `strip_tags`, `urlencode`,
+// `to_json` and `from_json`, and the same callable by the names of their
+// parameters (`helpers`). Every value they are handed is read through Bryntime,
+// which is how Brython's values are known.
 //
-// Why the generated script reaches them through one object rather than by name:
-// a component is free to call its own state `date` or `batch`, and an import of
-// that spelling would collide with the `let date = …` the compiler emits beside
-// it. `__helpers` carries the prefix that says "generated", the same convention
-// `__pybridge` and `__proto` follow.
+// What only the framework knows, it hands over: the text of a value in its
+// templates (`host.str`), and the subscription a relative time asks to be woken
+// by, which is Bryntime's (`host.subscriber` there).
 import {
     NONE,
-    __pybridge,
     callable,
+    declared,
     ownType,
     pyIterable,
     plainData,
@@ -19,11 +19,12 @@ import {
     pyBind,
     pyClass,
     pyCoroutine,
+    pyList,
     pyScalar,
+    pyStr,
     pyItems,
     hasItems,
     unpackedPair,
-    pyName,
     isSet,
     isDict,
     pyTypeName,
@@ -34,11 +35,31 @@ import {
     opaque,
     pyBytes,
     thenable,
-    ticking,
     unboxed,
     jsonCopy,
-    refusal
-} from './bridge.js';
+    refusal,
+    host as runtime
+} from 'bryntime';
+
+// What the framework that calls these filters decides, as Bryntime's `host`
+// holds what it decides: the text of a value in its templates (`str`), which a
+// filter starts from and a refusal shows. A template that writes absence as
+// nothing writes None as the empty string, and `slugify(None)` is then empty
+// too. Alone, Python's `str()`.
+export const host = {
+    str: (value) => pyStr(value)
+};
+
+// What to call a Python function in a message: its qualified name as
+// `$function_infos` records it, `Box.save` where `__name__` says `save`.
+//
+// Null for anything Python did not declare, so a caller keeps whatever it shows
+// of a value it cannot name.
+const pyName = (value) => {
+    const found = declared(value);
+
+    return found === null ? null : found.where.split(' — ')[0];
+};
 
 // What the author wrote, as a value JavaScript can read with `typeof`.
 //
@@ -94,18 +115,10 @@ const instantOf = (value) => {
     return held;
 };
 
-// A helper's refusal, in the dialect the rest of the project speaks.
-//
-// The eighteen refusals in `compile.js` and `markup.js` all open with
-// `svelthon — ` and all name a file. These three could do neither: they run at
-// render time, inside a compiled `__expr_N`, so the file is not theirs to know.
-//
-// A refusal (`refusal`) is what fixes that: signed with the project's name,
-// as the crossing's are. `pyError` already receives the expression and the
-// component from the wrapper that catches, and it completes a refusal with
-// them, which leaves the sentence here and the position there. Genuine
-// JavaScript errors keep crossing untouched, which was the reason `pyError`
-// stayed out of their way in the first place.
+// A filter's refusal: Bryntime's `refusal`, signed with the name of the
+// framework that runs it, as the crossing's are. It runs at render time, where
+// the file is not this function's to know; the framework that catches it says
+// where it stands. A genuine JavaScript error keeps crossing untouched.
 const refuse = refusal;
 
 // What a refusal shows of the value it refused.
@@ -119,7 +132,7 @@ function shown(value) {
     // `String()`, which would be its whole source text. Three things may know
     // its name and they are asked in the order they are trustworthy: what Python
     // recorded, then the name JavaScript gave it, which is what names a
-    // function an author imported through `__js__`, where Python knows nothing
+    // function an author imported from JavaScript, where Python knows nothing
     // and `str()` answers `<JavascriptFunction object>` for every one of them.
     //
     // An anonymous arrow has neither, and the generic wording below is then the
@@ -139,11 +152,11 @@ function shown(value) {
         // Python's own repr is what names it.
         //
         // `||` and not `??` on the second step, which is what the catch below
-        // already does: `str()` answers the empty string for the absence of a
-        // value, and a refusal reading `date():  is not a date` names nothing.
-        return JSON.stringify(value) ?? (__pybridge.str(value) || String(value));
+        // already does: the text of the absence of a value may be the empty
+        // string, and a refusal reading `date():  is not a date` names nothing.
+        return JSON.stringify(value) ?? (host.str(value) || String(value));
     } catch {
-        return __pybridge.str(value) || String(value);
+        return host.str(value) || String(value);
     }
 }
 
@@ -336,7 +349,7 @@ const noCall = (one) => {
     // serializable`, and the way out is the one a Python author already knows.
     if (isSet(one)) {
         throw refuse(
-            `to_json(): ${__pybridge.str(one)} is a set, and a set has no JSON. ` +
+            `to_json(): ${host.str(one)} is a set, and a set has no JSON. ` +
                 `Convert it with list() and serialise that.`
         );
     }
@@ -346,7 +359,7 @@ const noCall = (one) => {
     // Python author reaches for depending on what the bytes hold.
     if (pyBytes(one)) {
         throw refuse(
-            `to_json(): ${__pybridge.str(one)} is bytes, and bytes have no JSON. ` +
+            `to_json(): ${host.str(one)} is bytes, and bytes have no JSON. ` +
                 `Decode them with .decode() for text, or list() for the numbers.`
         );
     }
@@ -368,7 +381,7 @@ const noCall = (one) => {
         const named = pyTypeName(one);
 
         throw refuse(
-            `to_json(): ${__pybridge.str(one)} is a ${named}, and a ${named} has no JSON`
+            `to_json(): ${host.str(one)} is a ${named}, and a ${named} has no JSON`
         );
     }
 
@@ -406,8 +419,8 @@ export function to_json(value, indent) {
         // The JSON rule, asked for by name. JSON has neither identity nor
         // cycles, so a shared reference comes out twice and a loop comes out
         // `null`, the only thing a serialiser can do. It is not the default: the
-        // other five callers of `plainData` hand their result to JavaScript,
-        // which has identity.
+        // other callers of `plainData` hand their result to JavaScript, which
+        // has identity.
         plainData(value, new Set(), noCall),
         (_, one) => serialisable(one),
         level
@@ -494,59 +507,19 @@ export function from_json(text) {
     return pyJsonParse(text);
 }
 
-// The items of a sequence as Python's loop yields them, read once (`seq`) into
+// The items of a sequence as Python's loop yields them, `list()`, read once into
 // an array of the helper's own: a subclass whose `__iter__` filters or rewrites
 // its rows is read by it, and a JavaScript array by its iterator, never through
 // a `slice`, a `constructor` or a species it holds as data, which the standard
 // methods would ask for the copy they make.
-const yielded = (value) => Array.from(__pybridge.seq(value));
-
-// Jinja's `|batch(3)`. A list of lists, not a lazy iterator: an `{#each}` reads
-// its rows again on every update, and an iterator would come back empty the
-// second time, silently, with the table simply gone.
-//
-// `fill` pads the last row. `None` there means *no padding*, not "pad with
-// None", the rule every helper follows, since None is an object and would
-// otherwise sail through an `!== undefined` test and be rendered as a cell.
-export function batch(xs, size, fill) {
-    // The same recognition, for the same reason: `Number.isInteger` asked of the
-    // object a Python `int` subclass is answers false, so the size is read
-    // through `written` first. An int past 2^53 is a `bigint` there, and an int
-    // all the same, and so is `True`, the int 1. The constraint below is this
-    // helper's own.
-    size = written(size);
-    if (typeof size === 'boolean') size = Number(size);
-
-    if (!(typeof size === 'bigint' || Number.isInteger(size)) || size < 1) {
-        throw refuse('batch(): n must be an integer of at least one');
-    }
-
-    const items = yielded(xs);
-    const padded = fill !== undefined && fill !== NONE;
-
-    // A padded row holds `size` items, which no JavaScript array can past this.
-    if (padded && size > 2 ** 32 - 1) throw refuse('batch(): n is too large to pad a row to');
-
-    // A row is never longer than the input when nothing pads it, so a larger
-    // size is that length, read without a `bigint` turned into a double.
-    const step = size > items.length ? Math.max(items.length, 1) : Number(size);
-    const out = [];
-
-    for (let at = 0; at < items.length; at += step) {
-        const row = items.slice(at, at + step);
-        if (padded) while (row.length < size) row.push(fill);
-        out.push(__pybridge.list(row));
-    }
-
-    return __pybridge.list(out);
-}
+const yielded = (value) => Array.from(pyList(value));
 
 // Django's `|date`, under Django's word, with the platform's behaviour behind
 // it. No format letters: `Intl` takes four styles and answers in the reader's
 // own language, which Django's codes never do.
 //
 // `locale` matters most under server rendering: without it the server formats in
-// *its* language and the browser reformats in the visitor's, which Svelte
+// *its* language and the browser reformats in the visitor's, which a framework
 // reports as a hydration mismatch.
 // A date and nothing else: the one shape that is a day rather than an instant,
 // in the three forms the specification reads at midnight UTC, a day, a month,
@@ -599,8 +572,8 @@ export function date(value, dateStyle, timeStyle, locale) {
     //
     // Python answers this without ambiguity: `datetime.date(2026, 8, 24)`
     // carries no zone, and Django's `|date`, which is this helper's word,
-    // renders that day wherever it is read. The standard library is not
-    // available to a component either, so a string is all an author has to say
+    // renders that day wherever it is read. The standard library may not be
+    // there for a template either, so a string is all an author has to say
     // *a day* with.
     //
     // Rendered in the zone the specification already put it in, which is what
@@ -629,6 +602,77 @@ const formatter = (helper, locale, make) => {
         );
     }
 };
+
+// A shared clock, for the values that go stale on their own. `from_now` is the
+// one, and Django never needed it because a rendered page is finished. A
+// component stays on screen, so "3 minutes ago" has to become "4 minutes ago"
+// without anyone touching the page.
+//
+// One timer for the whole document, not one per date: every reader registers
+// through the same subscription, the framework's, which it hands Bryntime
+// (`host.subscriber`), so a tick re-runs exactly the blocks that read a relative
+// time and nothing else. Made at the first read, since the framework hands it
+// over once this module has loaded. Svelte's `createSubscriber` is a no-op on
+// the server, which is what stops a render from arming anything; and alone,
+// nothing subscribes, as in Django.
+//
+// The delay is what the *display* needs, not a fixed beat: a value shown in
+// seconds asks to be woken in a second, one shown in days asks for a day. So it
+// slows down on its own as the dates age, and the cap keeps a timer that would
+// otherwise be set for months down to an hour, which never sleeps, and costs
+// nothing.
+const AT_MOST = 3600 * 1000;
+
+let announce = null;
+let armed = null;
+let wanted = Infinity;
+let clock = null;
+
+// `createSubscriber` hands `update` to a *render effect*, so it arrives on the
+// next flush rather than on the line after the call. The delay asked for is
+// therefore recorded first and armed whenever arming becomes possible: once
+// here, once from `start`. Getting that backwards leaves the timer unset and the
+// value frozen, with nothing to show for it.
+const start = (update) => {
+    announce = update;
+    arm();
+
+    return () => {
+        announce = null;
+        if (armed) clearTimeout(armed.timer);
+        armed = null;
+        wanted = Infinity;
+    };
+};
+
+function arm() {
+    if (announce === null || wanted === Infinity) return;
+
+    const at = Date.now() + wanted;
+
+    // Keep the soonest of everything asked for since the last tick.
+    if (armed && armed.at <= at) return;
+    if (armed) clearTimeout(armed.timer);
+
+    armed = {
+        at,
+        timer: setTimeout(() => {
+            armed = null;
+            wanted = Infinity;
+            announce?.();
+        }, wanted)
+    };
+}
+
+function ticking(after) {
+    // Registers the dependency: the block calling this re-runs on the next tick.
+    (clock ??= runtime.subscriber(start))();
+
+    if (!(after > 0)) return;
+
+    wanted = Math.min(wanted, after, AT_MOST);
+    arm();
+}
 
 const UNITS = [
     ['year', 31536000], ['month', 2592000], ['week', 604800],
@@ -705,7 +749,7 @@ export function from_now(value, locale) {
 // Dropped once lowercased, so that a title Python lowercased first, a
 // heading's `lower()`, gives the slug its link gives.
 export function slugify(value) {
-    return __pybridge
+    return host
         .str(value)
         .normalize('NFKC')
         .toLowerCase()
@@ -726,18 +770,17 @@ export function slugify(value) {
 export function strip_tags(value) {
     if (typeof DOMParser === 'undefined') return '';
 
-    const parsed = new DOMParser().parseFromString(__pybridge.str(value), 'text/html');
+    const parsed = new DOMParser().parseFromString(host.str(value), 'text/html');
 
     // A script and a style hold text that is not text of the document, and
     // `textContent` cannot tell the difference. Dropping the source of a script
-    // is this helper's rule, held by `tests/stripped.test.js`, and the parser
-    // alone does not hold it: a `<script>` opening the fragment lands in
-    // `<head>`, which is not read here, while the same element between two words
-    // lands in `<body>`.
+    // is this filter's own rule, and the parser alone does not hold it: a
+    // `<script>` opening the fragment lands in `<head>`, which is not read here,
+    // while the same element between two words lands in `<body>`.
     //
-    // This is where the project takes its own answer rather than Jinja's, and it
-    // is written where the test says so: the regex behind `|striptags` keeps
-    // what a script holds, and what a template wants is the visible document.
+    // This is where the filter takes its own answer rather than Jinja's: the
+    // regex behind `|striptags` keeps what a script holds, and what a template
+    // wants is the visible document.
     for (const one of parsed.body.querySelectorAll('script, style')) one.remove();
 
     const text = parsed.body.textContent;
@@ -765,12 +808,12 @@ function mapping(value) {
     // Brython's mark, and a foreign object is free to carry a field spelled the
     // same, `{ob_type: "business", value: 42}`, which encodes as the identical
     // Python dict does. The question is *is this a Python object*, and `pyClass`
-    // is what the rest of the project asks. A Python object is a mapping when its
-    // class has `items`, which is what CPython's `urlencode` asks of it
-    // (`hasItems`): a mapping of the author's that is no dict was written as its
-    // `str`, and the link lost every parameter. A list of the author's that has
-    // `items` too, asked first as CPython asks: read as a sequence, the link
-    // carried what the list stores.
+    // is what Bryntime asks. A Python object is a mapping when its class has
+    // `items`, which is what CPython's `urlencode` asks of it (`hasItems`): a
+    // mapping of the author's that is no dict was written as its `str`, and the
+    // link lost every parameter. A list of the author's that has `items` too,
+    // asked first as CPython asks: read as a sequence, the link carried what the
+    // list stores.
     return pyClass(ownType(value)) ? hasItems(value) : !Array.isArray(value) && plainObject(value);
 }
 
@@ -792,8 +835,8 @@ const walkable = (one) => {
 //
 // A key that is not a string is written the way `str()` writes it, and two that
 // collide once written both stay, as in CPython's `urllib.parse.urlencode`,
-// which answers `1=a&1=b` for `{1: "a", "1": "b"}`. `None` among them, which
-// the template's text writes as nothing: the key `None` was the key `""`.
+// which answers `1=a&1=b` for `{1: "a", "1": "b"}`. `None` among them, which a
+// template's text may write as nothing: the key `None` was then the key `""`.
 export function urlencode(value) {
     // A Date is a value and never a mapping, and the sortable spelling is the
     // one a URL wants. Reading it through Python instead gave
@@ -850,21 +893,22 @@ export function urlencode(value) {
         const pairs = new URLSearchParams();
 
         for (const [key, one] of entries) {
-            pairs.append(key === NONE ? 'None' : __pybridge.str(key), __pybridge.str(one));
+            pairs.append(key === NONE ? 'None' : host.str(key), host.str(one));
         }
 
         return pairs.toString();
     }
 
-    // Everything else is a value, and a value is what Python prints of it. None
-    // is the one exception the whole set shares: absence encodes to nothing,
-    // which `__pybridge.str` already answers with an empty string.
-    return encodeURIComponent(__pybridge.str(value));
+    // Everything else is a value, and a value is what the template's text makes
+    // of it (`host.str`), None included: absence encodes to what the page shows
+    // of it.
+    return encodeURIComponent(host.str(value));
 }
 
-// **Called by name as well as by position.** The README writes these signatures
-// the way Python writes them, `to_json(value, indent=None)` or `batch(xs, n,
-// fill)`, and an author writes what the documentation shows.
+// **Called by name as well as by position.** These signatures are written the
+// way Python writes them, `to_json(value, indent=None)` or `date(value,
+// style=None, clock=None, locale=None)`, and an author writes what the
+// documentation shows.
 //
 // Brython hands a keyword call a trailing object carrying, under its symbol
 // `$B.KW`, an array whose first entry holds the literal keywords and whose rest
@@ -885,7 +929,6 @@ export function urlencode(value) {
 const KEYWORDS = {
     to_json: ['value', 'indent=None'],
     from_json: ['text'],
-    batch: ['xs', 'n', 'fill=None'],
     date: ['value', 'style=None', 'clock=None', 'locale=None'],
     from_now: ['value', 'locale=None'],
     slugify: ['text'],
@@ -936,8 +979,8 @@ const byName = (fn, signature) => {
         }
 
         // Which positions the call has already filled: a keyword naming one,
-        // `batch(rows, 2, n=3)`, is refused as Python refuses it, rather than
-        // overwriting what position put there.
+        // `date(when, "full", style="long")`, is refused as Python refuses it,
+        // rather than overwriting what position put there.
         const filled = new Set(given.keys());
 
         // The engine's own reading of the keywords, which is what a Python
@@ -956,8 +999,8 @@ const byName = (fn, signature) => {
                 throw refuse(`${fn.name}(): no argument named ${name}. ${takes}`);
             }
 
-            // A keyword that names a position already filled: `batch(rows, 2,
-            // n=3)` is two values for one parameter.
+            // A keyword that names a position already filled: `date(when,
+            // "full", style="long")` is two values for one parameter.
             if (filled.has(at)) {
                 throw refuse(`${fn.name}() got multiple values for argument '${name}'`);
             }
@@ -996,13 +1039,12 @@ const byName = (fn, signature) => {
     return wrapped;
 };
 
-// What the generated script binds. One object, one prefixed import, and the keys
-// are the Python spellings so `injected.js` names them the way an author does.
+// What a template binds: each filter under its Python spelling, called by
+// position or by name.
 export const helpers = Object.fromEntries(
     Object.entries({
         to_json,
         from_json,
-        batch,
         date,
         from_now,
         slugify,

@@ -1,0 +1,41 @@
+{
+  "name": "brylters",
+  "version": "0.5.0",
+  "description": "The Brython filters for JavaScript frameworks",
+  "author": "Florent Gallaire <fgallaire@gmail.com>",
+  "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/svelthon/brylters.git"
+  },
+  "bugs": {
+    "url": "https://github.com/svelthon/brylters/issues"
+  },
+  "keywords": [
+    "python",
+    "brython",
+    "template",
+    "filters"
+  ],
+  "type": "module",
+  "main": "./src/brylters.js",
+  "exports": {
+    ".": "./src/brylters.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "bryntime": "^2.0.0"
+  },
+  "devDependencies": {
+    "bryntime": "file:../bryntime",
+    "bryvend": "~3.14.3",
+    "jsdom": "^29.1.1",
+    "vitest": "^4.1.12"
+  }
+}
