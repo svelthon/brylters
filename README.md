@@ -30,7 +30,7 @@ const { date, slugify } = helpers; // each called by position or by name
 | `slugify(text)` | a title made into a URL segment, lowercased, every letter kept, accents included, and the rest a dash: `héllo-wörld`, where Django's `\|slugify` drops accents and punctuation |
 | `strip_tags(html)` | HTML shown as text, as Django's `strip_tags`, but parsed by the browser rather than pattern-matched, a script's source dropped |
 | `urlencode(value)` | a value, a mapping or a list of pairs, encoded into a URL, `/` included |
-| `to_json(value, indent=None)` | Jinja's `\|tojson`, laid out as `json.dumps` lays it out, a dict's order and an int's digits kept |
+| `to_json(value, indent=None)` | Jinja's `\|tojson` by JavaScript's own `JSON.stringify`, an int's digits and a float's `.0` kept |
 | `from_json(text)` | the way back, an int past 2^53 with its digits |
 
 Each is a plain function, exported under its name, and `helpers` holds them

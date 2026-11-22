@@ -75,9 +75,9 @@ test('urlencode writes a dict, and pairs that repeat a key', () => {
     expect(urlencode('a/b c')).toBe('a%2Fb%20c');
 });
 
-test("to_json keeps a dict's order and an int's digits, and refuses a set", () => {
-    expect(to_json(v('ordered'))).toBe('{"b":1,"a":2,"10":3}');
-    expect(to_json(v('ordered'), 1)).toBe('{\n "b": 1,\n "a": 2,\n "10": 3\n}');
+test("to_json writes a dict as JavaScript lists it, keeps an int's digits, and refuses a set", () => {
+    expect(to_json(v('ordered'))).toBe('{"10":3,"b":1,"a":2}');
+    expect(to_json(v('ordered'), 1)).toBe('{\n "10": 3,\n "b": 1,\n "a": 2\n}');
     expect(to_json(v('big'))).toBe('1180591620717411303424');
     expect(() => to_json(v('members'))).toThrow(/to_json\(\): \{1, 2\} is a set/);
 });
